@@ -29,12 +29,13 @@ crawler.on("fetchcomplete", (queueItem, data, res) => {
 });
 
 function goAjax (page=2, labelid, prevarticalid) {
-    let url = `http://baijia.baidu.com/ajax/labellatestarticle?page=${page}&pagesize=20&labelid=${labelid}&prevarticalid=${prevarticalid}`
+    let url = `http://baijia.baidu.com/ajax/labellatestarticle?page=${page}&pagesize=100&labelid=${labelid}&prevarticalid=${prevarticalid}`
     request(url, function(error, response, body){
         let list = JSON.parse(body).data.list;
 
         // 出错的时候，list为undefined
         if (!list) {
+            console.log(listArr[listArr.length-1]);
             return false;
         }
 
