@@ -6,7 +6,7 @@ const crawler_url = 'http://baijia.baidu.com';
 const crawler =  new SimpleCrawler(crawler_url);
 
 // config crawler
-crawler.discoverResources = false;
+crawler.discoverResources = false; // 禁用自动搜索资源
 
 crawler.on("fetchcomplete", (queueItem, data, res) => {
     const $ = cheerio.load(data);

@@ -8,15 +8,19 @@ const url = require('url');
 const mongoose = require('mongoose');
 
 // config mongodb
-mongolass.connect('mongodb://localhost:27017/rockme');
-const News = mongolass.model('News', {
-    title: { type: 'string'},
-    createtime: { type: 'string'},
-    summary: { type: 'string'},
-    tag:,
-    catagory:,
-    image:,
-})
+mongoose.connect('mongodb://localhost:27017/baijia');
+
+let newsScheme = mongoose.Schema({
+    title: String,
+    createtime: String,
+    summary: String,
+    content: String,
+    tag: Array,
+    catagory: Array,
+    image: Array,
+});
+
+let News = mongoose.model('News', newsScheme);
 
 const crawler_url = 'http://wangxinxi.baijia.baidu.com/article/728945';
 const crawler = new SimpleCrawler(crawler_url);
@@ -26,19 +30,36 @@ crawler.discoverResources = false;
 
 crawler.on("fetchcomplete", (queueItem, data, res) => {
     let picArr = [];
+    let picNameArr = [];
     const $ = cheerio.load(data);
-    // console.log(htmlDecode($(".article-detail").html()));
-    // TODO: download image
+    let title = $("#page h1").text();
+    let createtime = $("#page span.time").text();
+    let summary = $("#page .iquote").text();
+    let tag = [];
+    let catagory = $("#page .category").text();
+    let content;
+
+    $("#page .tag").each(function(index, value){
+        tag.push($(this).text());
+    });
+
+    // download image
     $(".article-detail img").each(function(index, value){
+        let oldUrl = $(this).attr("src");
+        $(this).attr("src", 'img/'+oldUrl.split('/').pop());
         picArr.push($(this).attr('src'));
     });
-    console.log(picArr);
+
+    content = htmlDecode($(".article-detail").html());
+
     let concurrencyCount = 0;
 
-    async.mapLimit(picArr, 3, function(pic, callback){
+    async.mapLimit(picArr, 100, function(pic, callback){
         // download to local
-        let localUrl = 'img/' + pic.split("/").pop();
-        // console.log(localUrl);
+        let picName = pic.split("/").pop();
+        let localUrl = 'img/' + picName;
+        picNameArr.push(picName);
+
         fs.exists(localUrl, function(exists){
             if (exists) {
                 console.log("file exists");
@@ -56,9 +77,19 @@ crawler.on("fetchcomplete", (queueItem, data, res) => {
             }
         });
     }, function(err, result){
-        console.log("=======================");
-        console.log(err);
-        console.log(result);
+        if (err) console.log(err);
+        console.log(result)
+        new News({
+            title,
+            createtime,
+            summary,
+            tag,
+            catagory,
+            content,
+            image: picNameArr,
+        }).save(function (err, silence) {
+            if (err) return console.log(err);
+        });
     });
 
     // TODO: 不能被人爬到我们的内容，因为有些文章是有版权的
@@ -66,4 +97,3 @@ crawler.on("fetchcomplete", (queueItem, data, res) => {
 });
 
 crawler.start();
-
