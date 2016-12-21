@@ -5,22 +5,7 @@ const request = require('request');
 const fs = require('fs');
 const async = require('async');
 const url = require('url');
-const mongoose = require('mongoose');
-
-// config mongodb
-mongoose.connect('mongodb://localhost:27017/baijia');
-
-let newsScheme = mongoose.Schema({
-    title: String,
-    createtime: String,
-    summary: String,
-    content: String,
-    tag: Array,
-    catagory: Array,
-    image: Array,
-});
-
-let News = mongoose.model('News', newsScheme);
+// const push_to_crawler = require('')
 
 const crawler_url = 'http://wangxinxi.baijia.baidu.com/article/728945';
 const crawler = new SimpleCrawler(crawler_url);
@@ -29,7 +14,7 @@ const crawler = new SimpleCrawler(crawler_url);
 crawler.discoverResources = false;
 
 crawler.on("fetchcomplete", (queueItem, data, res) => {
-    let picArr = [];
+    let picUrlArr = [];
     let picNameArr = [];
     const $ = cheerio.load(data);
     let title = $("#page h1").text();
@@ -47,14 +32,14 @@ crawler.on("fetchcomplete", (queueItem, data, res) => {
     $(".article-detail img").each(function(index, value){
         let oldUrl = $(this).attr("src");
         $(this).attr("src", 'img/'+oldUrl.split('/').pop());
-        picArr.push($(this).attr('src'));
+        picUrlArr.push($(this).attr('src'));
     });
 
     content = htmlDecode($(".article-detail").html());
 
     let concurrencyCount = 0;
 
-    async.mapLimit(picArr, 100, function(pic, callback){
+    async.mapLimit(picUrlArr, 100, function(pic, callback){
         // download to local
         let picName = pic.split("/").pop();
         let localUrl = 'img/' + picName;
@@ -87,7 +72,7 @@ crawler.on("fetchcomplete", (queueItem, data, res) => {
             catagory,
             content,
             image: picNameArr,
-        }).save(function (err, silence) {
+        }).save(function (err) {
             if (err) return console.log(err);
         });
     });
