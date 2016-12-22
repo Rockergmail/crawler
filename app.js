@@ -2,10 +2,11 @@ const SimpleCrawler = require('simplecrawler');
 const cheerio = require('cheerio');
 const htmlDecode = require('js-htmlencode').htmlDecode;
 const request = require('request');
-const fs = require('fs');
+const fs = require('graceful-fs');
 const async = require('async');
+const log4js = require('log4js');
 const url = require('url');
-const News = require("./model/models");
+const models = require("./model/models");
 const utils = require('./util/utils');
 
 const crawler_url = 'http://baijia.baidu.com';
@@ -16,20 +17,32 @@ const crawler_url = 'http://baijia.baidu.com';
 const crawler =  new SimpleCrawler(crawler_url);
 let listUrlArr = []; // 分类url数组
 let pageUrlArr = []; // 文章url数组
+let fuckNumber = 1;
+
+log4js.configure({
+    appenders: [{
+        // type: 'DataFile',
+        type: 'file',
+        filename: 'debug.log',
+        // pattern: '-yyyy-MM-dd.log',
+        // alwaysIncludePattern: true,
+        // category: 'access'
+    }]
+});
+let logger = log4js.getLogger();
+
 
 // config crawler
 crawler.discoverResources = false; // 禁用自动搜索资源
 crawler.userAgent = utils.getRandomUseragent();
 crawler.respectRobotsTxt = false;
+// crawler.interval = 1000;
+crawler.maxConcurrency = 1000;
+crawler.filterByDomain = false;
+
 
 crawler.on("fetchcomplete", (queueItem, data, res) => {
     const $ = cheerio.load(data);
-    // console.log(queueItem.url.split("/").indexOf("article") > -1);
-    console.log(queueItem.url);
-    referrer = {
-        url: queueItem.url,
-        depth: queueItem.depth + 1
-    };
 
     // fetch list url
     if (queueItem.url === 'http://baijia.baidu.com/') {
@@ -39,18 +52,18 @@ crawler.on("fetchcomplete", (queueItem, data, res) => {
             }
         });
         // push to crawler queue
-        pushToCrawler(listUrlArr, referrer);
+        pushToCrawler(listUrlArr, queueItem);
         return false;
     }
 
     // fetch page url
     if (url.parse(queueItem.url, true).query.tn === "listarticle") {
         let lastId = $(".feeds-item:last-child").attr("id").replace(/[item-]/g,"");
-        let tempArr = [];
+        // let tempArr = [];
 
         $("#feeds .feeds-item").each(function(index, value){
-            // pageUrlArr.push($(this).find("h3 a").attr("href"));
-            tempArr.push($(this).find("h3 a").attr("href"));
+            pageUrlArr.push($(this).find("h3 a").attr("href"));
+            // tempArr.push($(this).find("h3 a").attr("href"));
         });
 
         /*setTimeout(function() {
@@ -60,7 +73,8 @@ crawler.on("fetchcomplete", (queueItem, data, res) => {
         }, 0);*/
 
         // pushToCrawler(pageUrlArr.splice(0, pageUrlArr.length), queueItem.referrer);
-        pushToCrawler(tempArr, referrer);
+        goAjax(2, url.parse(queueItem.url, true).query.labelid, lastId, queueItem);
+        // pushToCrawler(tempArr, queueItem);
 
         return false;
     }
@@ -68,11 +82,12 @@ crawler.on("fetchcomplete", (queueItem, data, res) => {
     // fetch page info
     if (queueItem.url.split("/").indexOf("article") > -1) {
         let picUrlArr = [];
+        let picLocalUrlArr = [];
         let picNameArr = [];
         const $ = cheerio.load(data);
         let title = $("#page h1").text();
         let createtime = $("#page span.time").text();
-        let summary = $("#page .iquote").text();
+        let summary = $("#page blockquote").text();
         let tag = [];
         let catagory = $("#page .category").text();
         let content;
@@ -84,8 +99,9 @@ crawler.on("fetchcomplete", (queueItem, data, res) => {
         // download image
         $(".article-detail img").each(function(index, value){
             let oldUrl = $(this).attr("src");
+            picUrlArr.push(oldUrl);
             $(this).attr("src", 'img/'+oldUrl.split('/').pop());
-            picUrlArr.push($(this).attr('src'));
+            // picLocalUrlArr.push($(this).attr('src'));
         });
 
         content = htmlDecode($(".article-detail").html());
@@ -100,24 +116,25 @@ crawler.on("fetchcomplete", (queueItem, data, res) => {
 
             fs.exists(localUrl, function(exists){
                 if (exists) {
-                    console.log("file exists");
+                    console.log(`file exists: ${picName}`);
+                    return false;
                     callback(null, 'exists');
                 } else {
                     concurrencyCount++;
-                    console.log(`并发数：${concurrencyCount}, now fetching: ${pic}`)
-                    request(pic)
-                        .pipe(fs.createWriteStream(localUrl))
-                        .on('close', function(){
-                            console.log(`Done: ${pic}`);
+                    console.log(`并发数：${concurrencyCount}, fetching: ${pic}`)
+                    request(pic).on('error', function(error){
+                            logger.debug("picRequest", error);
+                            return false;
+                        }).pipe(fs.createWriteStream(localUrl)).on('close', function(){
+                            console.log(`fetched: ${pic}`);
                             concurrencyCount--;
                             callback(null, "next");
                         });
                 }
             });
         }, function(err, result){
-            if (err) console.log(err);
-            console.log(result)
-            new News({
+            if (err) logger.debug("asyncError", err);
+            new models.News({
                 title,
                 createtime,
                 summary,
@@ -126,7 +143,8 @@ crawler.on("fetchcomplete", (queueItem, data, res) => {
                 content,
                 image: picNameArr,
             }).save(function (err) {
-                if (err) return console.log(err);
+                if (err) return logger.debug("saveError", err);
+                console.log("saved to db");
             });
         });
     }
@@ -139,8 +157,8 @@ crawler.on("fetchcomplete", (queueItem, data, res) => {
 });
 
 // 发送ajax请求文章列表分页
-// function goAjax (page=2, labelid, prevarticalid, queueItem) {
-function goAjax (page=2, labelid, prevarticalid) {
+function goAjax (page=2, labelid, prevarticalid, queueItem) {
+// function goAjax (page=2, labelid, prevarticalid) {
     let url = `http://baijia.baidu.com/ajax/labellatestarticle?page=${page}&pagesize=20&labelid=${labelid}&prevarticalid=${prevarticalid}`
     request(url, function(error, response, body){
         let list = JSON.parse(body).data.list;
@@ -158,25 +176,36 @@ function goAjax (page=2, labelid, prevarticalid) {
             pageUrlArr.push(list[i].m_display_url);
         }
 
-        console.log(pageUrlArr.length);
         /*if (pageUrlArr.length > 0) {
             pushToCrawler(pageUrlArr.splice(0, 10), queueItem.referrer);
         }*/
         // goAjax(page+1, labelid, lastId, queueItem);
-        goAjax(page+1, labelid, lastId);
+        pushToCrawler(pageUrlArr.splice(0, 10), queueItem);
+        goAjax(page+1, labelid, lastId, queueItem);
     })
 }
 
 // 推送到爬虫队列
-function pushToCrawler (urlArr, referrerQueueItem) {
-    console.log("here i push");
+function pushToCrawler (urlArr, queueItem) {
     for (let i=0; i<urlArr.length; i++) {
-        crawler.queueURL(urlArr[i], referrerQueueItem, false);
+        // console.log(`now push: ${urlArr[i]}`);
+        crawler.queueURL(urlArr[i], {
+            url: queueItem.url,
+            depth: queueItem.depth,
+            status: queueItem.status,
+            fetched: queueItem.fetched,
+            protocol: queueItem.protocol,
+            host: queueItem.host,
+            port: queueItem.port,
+            path: queueItem.path
+        }, false);
     }
 }
 
-crawler.on('queueerror', (error, queueItem) => {
-    console.log(`排队${queueItem.url}出错`);
+crawler.on('queueerror', (error, URLData) => {
+    console.log("排队错误");
+    console.log(error);
+    console.log(URLData);
 });
 crawler.on('fetchdataerror', (error, queueItem) => {
     console.log(`爬取${queueItem.url}出错`);
@@ -187,16 +216,32 @@ crawler.on('downloadprevented', (queueItem, res) => {
 crawler.on('fetchdisallowed', (queueItem) => {
     console.log(`不准爬取${queueItem.url}`);
 });
-crawler.on('queueduplicate', (queueItem)=> {
-    console.log(`队列重复${queueItem.url}`);
+crawler.on('queueduplicate', (URLData)=> {
+    console.log(`队列重复${URLData}`);
 });
 crawler.on('fetchtimeout', (queueItem) => {
     console.log(`爬取超时${queueItem.url}`);
 });
 crawler.on('fetchclienterror', (queueItem, errorData) => {
+    console.log(errorData);
     console.log(`客户端错误${queueItem.url}`);
 });
+crawler.on("queueadd", function(queueItem){
+    if (queueItem) {
+        console.log(`--> ${queueItem.url}  the depth: ${queueItem.depth}`);
+    }
+});
+crawler.on("queueerror", function(queueItem){
+    console.log(`xxx ${queueItem.url}`);
+});
+crawler.on("robotstxterror", function(queueItem){
+    console.log(`xxx ${queueItem.url}`);
+});
 
+crawler.on('complete', () => {
+    console.log(`完成了？`);
+    return false;
+});
 
 crawler.start();
 
